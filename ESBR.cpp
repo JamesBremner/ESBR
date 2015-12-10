@@ -9,6 +9,22 @@ std::ofstream flog;
 
 /*  Units: unless specified otherwise, grams, litres and hours */
 
+/* Values from table 1 */
+double cellmass_stops_growth = 9.806;
+double cellmass_inhibition_constant = 0.4583;
+double butanol_stops_growth = 12.57;
+double butanol_inhibition_constant = 0.0159;
+
+/* estimated values of μm, KS, and KI for the growth of
+the recombinant Clostridium acetobutylicum under substratelimiting
+conditions are 0.238 h−1, 0.357 g/L, and 272.3 g/L,
+respectively.
+*/
+
+double cell_growth_rate_max = 0.238;
+double substrate_saturation_constant = 0.357;
+double substrate_inhibition_constant = 272.3;
+
 double volume_fermenter = 10;
 double feed_flow_rate = 0.0;
 double sugar_feed = 1.0;
@@ -35,51 +51,73 @@ double ethanol_rate_r;
 double butanol_adsorption_rate;
 double ethanol_adsorption_rate;
 
-class cAdsorber {
-    public:
-double mass_kg = 10;
-double volume = 1000;
-double butanol_kinetic_min = 10;
-double ethanol_kinetic_min = 10;
-double butanol_equilibrium = 1;
-double ethanol_equilibrium = 1;
-double ethanol = 0;
-double butanol = 0;
-double cellmass_rate;
-double sugar_rate;
-double butanol_rate;
-double ethanol_rate;
-double cellmass = 0;
-double sugar = 0;
-double cell_net_growth = 0.0625;
-double circulation_ratio;
-
-void Increment( double time_step )
+class cFermenter
 {
-    cellmass += cellmass_rate * time_step;
-    sugar    += sugar_rate * time_step;
-    butanol  += butanol_rate * time_step;
-    ethanol  += ethanol_rate * time_step;
-}
-/** Write adsorption rates to log file
+public:
+    double cell_growth_rate;
 
-The delta function has given us the rate of change in component concentration
-
-We want to display the total grams of component adsorbed each hour
-so we need to reverse the sign and multiply by the volume
-
- */
-void dump()
-{
-    flog << std::setprecision(3);
-    flog << std::setw(12) << - butanol_rate * volume
-         <<  std::setw(12) << - ethanol_rate * volume;
-
-}
+    void Delta();
 };
 
+class cAdsorber
+{
+public:
+    double mass_kg = 10;
+    double volume = 1000;
+    double butanol_kinetic_min = 10;
+    double ethanol_kinetic_min = 10;
+    double butanol_equilibrium = 1;
+    double ethanol_equilibrium = 1;
+    double ethanol = 0;
+    double butanol = 0;
+    double cellmass_rate;
+    double sugar_rate;
+    double butanol_rate;
+    double ethanol_rate;
+    double cellmass = 0;
+    double sugar = 0;
+    double cell_net_growth = 0.0625;
+    double circulation_ratio;
+
+    void Increment( double time_step )
+    {
+        cellmass += cellmass_rate * time_step;
+        sugar    += sugar_rate * time_step;
+        butanol  += butanol_rate * time_step;
+        ethanol  += ethanol_rate * time_step;
+    }
+    /** Write adsorption rates to log file
+
+    The delta function has given us the rate of change in component concentration
+
+    We want to display the total grams of component adsorbed each hour
+    so we need to reverse the sign and multiply by the volume
+
+     */
+    void dump()
+    {
+        flog << std::setprecision(3);
+        flog << std::setw(12) << - butanol_rate * volume
+             <<  std::setw(12) << - ethanol_rate * volume;
+
+    }
+};
+
+cFermenter fermenter;
 cAdsorber adsorber;
 
+
+void cFermenter::Delta()
+{
+    // Eq 1
+    double butane_inhibition_factor =
+        pow( 1 - butanol_fermenter / butanol_stops_growth, butanol_inhibition_constant );
+    double cellmass_inhibition_factor =
+        pow( 1 - cellmass_fermenter / cellmass_stops_growth, cellmass_inhibition_constant );
+    cell_growth_rate =
+        cell_growth_rate_max * sugar_fermenter * butane_inhibition_factor * cellmass_inhibition_factor /
+        ( substrate_saturation_constant + sugar_fermenter + sugar_fermenter * sugar_fermenter / substrate_inhibition_constant );
+}
 
 
 void read_params( int ac, char* av[] )
@@ -152,7 +190,7 @@ void read_params( int ac, char* av[] )
     {
         specific_butanol_growth_rate = vm["butanol_growth_rate"].as<double>();
     }
-   if( vm.count("ethanol_growth_rate"))
+    if( vm.count("ethanol_growth_rate"))
     {
         specific_ethanol_growth_rate = vm["ethanol_growth_rate"].as<double>();
     }
@@ -177,6 +215,8 @@ Implements mass balance equations
 void delta()
 {
     // fermenter
+
+
 
     // Eq 19
     cellmass_rate_r =
@@ -228,7 +268,7 @@ void delta()
         butanol_adsorption_rate;
 
     // Eq 26
-     adsorber.ethanol_rate =
+    adsorber.ethanol_rate =
         ( ethanol_fermenter - adsorber.ethanol ) * adsorber.circulation_ratio +
         specific_ethanol_growth_rate * adsorber.cellmass +
         ethanol_adsorption_rate;

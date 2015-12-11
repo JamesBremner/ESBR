@@ -11,9 +11,8 @@ std::ofstream flog;
 
 
 
-double volume_fermenter = 10;
-double feed_flow_rate = 0.0;
-double sugar_feed = 1.0;
+double feed_flow_rate = 0.099;
+double sugar_feed = 200.0;
 double circulation_flow_rate = 0 ;
 //double specific_cell_growth_rate = 0.0625;
 double specific_sugar_growth_rate = 0.0625;
@@ -24,8 +23,7 @@ double specific_ethanol_growth_rate = 0.0625;
 double circulation_ratio;
 double dilution_rate;
 
-double butanol_adsorption_rate;
-double ethanol_adsorption_rate;
+
 
 class cYeast
 {
@@ -67,9 +65,11 @@ class cFermenter
 {
 public:
 
+    double volume = 300;
+
     // component concentrations g/l
     double cellmass = 1;
-    double sugar    = 1.0;
+    double sugar    = 200.0;
     double butanol  = 0;
     double ethanol  = 0;
 
@@ -88,13 +88,15 @@ class cAdsorber
 {
 public:
     double mass_kg = 10;
-    double volume = 1000;
+    double volume = 50;
     double butanol_kinetic_min = 10;
     double ethanol_kinetic_min = 10;
     double butanol_equilibrium = 1;
     double ethanol_equilibrium = 1;
     double ethanol = 0;
     double butanol = 0;
+    double butanol_adsorption_rate;
+    double ethanol_adsorption_rate;
     double cell_specific_rate;
     double cell_growth_rate;
     double sugar_rate;
@@ -116,17 +118,12 @@ public:
 
     /** Write adsorption rates to log file
 
-    The delta function has given us the rate of change in component concentration
-
-    We want to display the total grams of component adsorbed each hour
-    so we need to reverse the sign and multiply by the volume
-
      */
     void dump()
     {
         flog << std::setprecision(3);
-        flog << std::setw(12) << - butanol_rate * volume
-             <<  std::setw(12) << - ethanol_rate * volume;
+        flog << std::setw(12) << - butanol_adsorption_rate
+             <<  std::setw(12) << - ethanol_adsorption_rate;
 
     }
 };
@@ -183,7 +180,7 @@ void read_params( int ac, char* av[] )
     po::options_description desc("Allowed options");
     desc.add_options()
     ("help", "produce help message")
-    ("volume_fermenter", po::value<double>()->default_value( 10 ), "fermenter volume L")
+    ("volume_fermenter", po::value<double>()->default_value( fermenter.volume ), "fermenter volume L")
     ("feed_flow_rate ", po::value<double>()->default_value( feed_flow_rate ), "feed flow rate L/h")
     ("sugar_feed", po::value<double>()->default_value(sugar_feed),"sugar concentration in feed g/L")
     ("circulation_flow_rate", po::value<double>()->default_value( circulation_flow_rate ), "flow rate from fermenter to adsorber L/h")
@@ -217,7 +214,7 @@ void read_params( int ac, char* av[] )
     // set the values
     if( vm.count("volume_fermenter"))
     {
-        volume_fermenter = vm["volume_fermenter"].as<double>();
+        fermenter.volume = vm["volume_fermenter"].as<double>();
     }
     if( vm.count("feed_flow_rate"))
     {
@@ -252,9 +249,9 @@ void read_params( int ac, char* av[] )
         fermenter.sugar = vm["sugar_fermenter"].as<double>();
     }
 
-    circulation_ratio =  circulation_flow_rate / volume_fermenter;
+    circulation_ratio =  circulation_flow_rate / fermenter.volume;
     adsorber.circulation_ratio = circulation_flow_rate / adsorber.volume;
-    dilution_rate      =  feed_flow_rate / volume_fermenter;
+    dilution_rate      =  feed_flow_rate / fermenter.volume;
 
 }
 /** Calulate current rates of change.
@@ -295,10 +292,10 @@ void delta()
     adsorber.Delta();
 
     // Eq 13
-    butanol_adsorption_rate =
+    adsorber.butanol_adsorption_rate =
         - ( adsorber.mass_kg / adsorber.volume ) * adsorber.butanol_kinetic_min *
         ( adsorber.butanol_equilibrium - adsorber.butanol / adsorber.mass_kg  );
-    ethanol_adsorption_rate =
+    adsorber.ethanol_adsorption_rate =
         - ( adsorber.mass_kg / adsorber.volume ) * adsorber.ethanol_kinetic_min *
         ( adsorber.ethanol_equilibrium - adsorber.ethanol / adsorber.mass_kg  );
 
@@ -316,13 +313,13 @@ void delta()
     adsorber.butanol_rate =
         ( fermenter.butanol - adsorber.butanol ) * adsorber.circulation_ratio +
         specific_butanol_growth_rate * adsorber.cellmass +
-        butanol_adsorption_rate;
+        adsorber.butanol_adsorption_rate;
 
     // Eq 26
     adsorber.ethanol_rate =
         ( fermenter.ethanol - adsorber.ethanol ) * adsorber.circulation_ratio +
         specific_ethanol_growth_rate * adsorber.cellmass +
-        ethanol_adsorption_rate;
+        adsorber.ethanol_adsorption_rate;
 
 }
 
@@ -353,11 +350,11 @@ int main( int ac, char* av[] )
 
     // open log file
     flog.open("test.txt");
-    flog << "             fermenter                               adsorber\n";
-    flog << "cellmass     sugar      ethanol  butanol    ethanol g/h   butanol g/h\n";
+    flog << "             fermenter                   ||      adsorber\n";
+    flog << "cellmass     sugar       ethanol  butanol||  ethanol g/h   butanol g/h\n";
 
     // loop over simulation timesteps
-    for( int t = 0; t < 20; t++ )
+    for( int t = 0; t < 100; t++ )
     {
         // write current values to log file
         dump();

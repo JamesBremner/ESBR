@@ -9,54 +9,79 @@ std::ofstream flog;
 
 /*  Units: unless specified otherwise, grams, litres and hours */
 
-/* Values from table 1 */
-double cellmass_stops_growth = 9.806;
-double cellmass_inhibition_constant = 0.4583;
-double butanol_stops_growth = 12.57;
-double butanol_inhibition_constant = 0.0159;
 
-/* estimated values of μm, KS, and KI for the growth of
-the recombinant Clostridium acetobutylicum under substratelimiting
-conditions are 0.238 h−1, 0.357 g/L, and 272.3 g/L,
-respectively.
-*/
-
-double cell_growth_rate_max = 0.238;
-double substrate_saturation_constant = 0.357;
-double substrate_inhibition_constant = 272.3;
 
 double volume_fermenter = 10;
 double feed_flow_rate = 0.0;
 double sugar_feed = 1.0;
 double circulation_flow_rate = 0 ;
-double specific_cell_growth_rate = 0.0625;
+//double specific_cell_growth_rate = 0.0625;
 double specific_sugar_growth_rate = 0.0625;
 double specific_butanol_growth_rate = 0.015625;
 double specific_ethanol_growth_rate = 0.0625;
-double cellmass_fermenter = 100;
-double sugar_fermenter = 1.0;
-double butanol_fermenter = 0;
-double ethanol_fermenter = 0;
 
 
 double circulation_ratio;
 double dilution_rate;
 
-// current rates of change in fermenter
-double cellmass_rate_r;
-double sugar_rate_r;
-double butanol_rate_r;
-double ethanol_rate_r;
-
 double butanol_adsorption_rate;
 double ethanol_adsorption_rate;
+
+class cYeast
+{
+public:
+    /* Values from table 1 */
+    double cellmass_stops_growth = 9.806;
+    double cellmass_inhibition_constant = 0.4583;
+    double butanol_stops_growth = 12.57;
+    double butanol_inhibition_constant = 0.0159;
+
+    /* estimated values of μm, KS, and KI for the growth of
+    the recombinant Clostridium acetobutylicum under substratelimiting
+    conditions are 0.238 h−1, 0.357 g/L, and 272.3 g/L,
+    respectively.
+    */
+
+    double cell_growth_rate_max = 0.238;
+    double substrate_saturation_constant = 0.357;
+    double substrate_inhibition_constant = 272.3;
+
+    /** Cell growth rate g/h
+
+    @param[in] sugar g/l
+    @param[in] butanol g/l
+    @param[in] cellmass g/l
+
+    Implements equation 1
+
+    */
+    double Delta(
+        double sugar,
+        double butanol,
+        double cellmass
+    );
+
+};
 
 class cFermenter
 {
 public:
+
+    // component concentrations g/l
+    double cellmass = 1;
+    double sugar    = 1.0;
+    double butanol  = 0;
+    double ethanol  = 0;
+
+    // component rates of change /h
+    double cell_specific_rate;
     double cell_growth_rate;
+    double sugar_rate;
+    double butanol_rate;
+    double ethanol_rate;
 
     void Delta();
+    void Increment( double time_step );
 };
 
 class cAdsorber
@@ -70,22 +95,25 @@ public:
     double ethanol_equilibrium = 1;
     double ethanol = 0;
     double butanol = 0;
-    double cellmass_rate;
+    double cell_specific_rate;
+    double cell_growth_rate;
     double sugar_rate;
     double butanol_rate;
     double ethanol_rate;
     double cellmass = 0;
     double sugar = 0;
-    double cell_net_growth = 0.0625;
     double circulation_ratio;
 
     void Increment( double time_step )
     {
-        cellmass += cellmass_rate * time_step;
+        cellmass += cell_growth_rate * time_step;
         sugar    += sugar_rate * time_step;
         butanol  += butanol_rate * time_step;
         ethanol  += ethanol_rate * time_step;
     }
+
+    void Delta();
+
     /** Write adsorption rates to log file
 
     The delta function has given us the rate of change in component concentration
@@ -105,18 +133,44 @@ public:
 
 cFermenter fermenter;
 cAdsorber adsorber;
+cYeast yeast;
 
 
 void cFermenter::Delta()
 {
+    cell_specific_rate = yeast.Delta(
+                             sugar,
+                             butanol,
+                             cellmass );
+}
+void cAdsorber::Delta()
+{
+    cell_specific_rate = yeast.Delta(
+                             sugar,
+                             butanol,
+                             cellmass );
+}
+double cYeast::Delta(
+    double sugar,
+    double butanol,
+    double cellmass
+)
+{
+
     // Eq 1
     double butane_inhibition_factor =
-        pow( 1 - butanol_fermenter / butanol_stops_growth, butanol_inhibition_constant );
+        pow( 1 - butanol / butanol_stops_growth, butanol_inhibition_constant );
+
     double cellmass_inhibition_factor =
-        pow( 1 - cellmass_fermenter / cellmass_stops_growth, cellmass_inhibition_constant );
-    cell_growth_rate =
-        cell_growth_rate_max * sugar_fermenter * butane_inhibition_factor * cellmass_inhibition_factor /
-        ( substrate_saturation_constant + sugar_fermenter + sugar_fermenter * sugar_fermenter / substrate_inhibition_constant );
+        pow( 1 - cellmass / cellmass_stops_growth, cellmass_inhibition_constant );
+
+    double substrate_inhibition_factor =
+        1 / ( substrate_saturation_constant + sugar + sugar * sugar / substrate_inhibition_constant );
+
+    double r =
+        cell_growth_rate_max * sugar * butane_inhibition_factor * cellmass_inhibition_factor * substrate_inhibition_factor;
+
+    return r;
 }
 
 
@@ -133,12 +187,11 @@ void read_params( int ac, char* av[] )
     ("feed_flow_rate ", po::value<double>()->default_value( feed_flow_rate ), "feed flow rate L/h")
     ("sugar_feed", po::value<double>()->default_value(sugar_feed),"sugar concentration in feed g/L")
     ("circulation_flow_rate", po::value<double>()->default_value( circulation_flow_rate ), "flow rate from fermenter to adsorber L/h")
-    ("cell_growth_rate",  po::value<double>()->default_value( 0.0625 ), "specific cell growth rate g/g/h ")
     ("sugar_growth_rate", po::value<double>()->default_value( 0.0625 ), "specific sugar growth rate g/g/h ")
     ("butanol_growth_rate", po::value<double>()->default_value( specific_butanol_growth_rate ), "specific butanol growth rate g/g/h ")
     ("ethanol_growth_rate", po::value<double>()->default_value( 0.0625 ), "specific ethanol growth rate g/g/h ")
-    ("cellmass_fermenter", po::value<double>()->default_value( cellmass_fermenter ), "starting cell mass in fermenter g")
-    ("sugar_fermenter",  po::value<double>()->default_value( sugar_fermenter ), "starting sugar in fermenter g/L" )
+    ("cellmass_fermenter", po::value<double>()->default_value( fermenter.cellmass ), "starting cell mass in fermenter g/L")
+    ("sugar_fermenter",  po::value<double>()->default_value( fermenter.sugar ), "starting sugar in fermenter g/L" )
     ;
 
     // parse the command line
@@ -178,10 +231,6 @@ void read_params( int ac, char* av[] )
     {
         circulation_flow_rate = vm["circulation_flow_rate"].as<double>();
     }
-    if( vm.count("cell_growth_rate"))
-    {
-        specific_cell_growth_rate = vm["cell_growth_rate"].as<double>();
-    }
     if( vm.count("sugar_growth_rate"))
     {
         specific_sugar_growth_rate = vm["sugar_growth_rate"].as<double>();
@@ -196,11 +245,11 @@ void read_params( int ac, char* av[] )
     }
     if( vm.count("cellmass_fermenter"))
     {
-        cellmass_fermenter = vm["cellmass_fermenter"].as<double>();
+        fermenter.cellmass = vm["cellmass_fermenter"].as<double>();
     }
     if( vm.count("sugar_fermenter"))
     {
-        sugar_fermenter = vm["sugar_fermenter"].as<double>();
+        fermenter.sugar = vm["sugar_fermenter"].as<double>();
     }
 
     circulation_ratio =  circulation_flow_rate / volume_fermenter;
@@ -216,32 +265,34 @@ void delta()
 {
     // fermenter
 
-
+    fermenter.Delta();
 
     // Eq 19
-    cellmass_rate_r =
-        ( specific_cell_growth_rate - dilution_rate ) * cellmass_fermenter +
-        ( adsorber.cellmass - cellmass_fermenter ) * circulation_ratio;
+    fermenter.cell_growth_rate =
+        ( fermenter.cell_specific_rate - dilution_rate ) * fermenter.cellmass +
+        ( adsorber.cellmass - fermenter.cellmass ) * circulation_ratio;
 
     // Eq 20
-    sugar_rate_r =
-        ( sugar_feed - sugar_fermenter ) * dilution_rate +
-        ( adsorber.sugar - sugar_fermenter ) * circulation_ratio  +
-        specific_sugar_growth_rate *  cellmass_fermenter;
+    fermenter.sugar_rate =
+        ( sugar_feed - fermenter.sugar ) * dilution_rate +
+        ( adsorber.sugar - fermenter.sugar ) * circulation_ratio  +
+        specific_sugar_growth_rate *  fermenter.cellmass;
 
     // Eq 21
-    butanol_rate_r =
-        ( adsorber.butanol - butanol_fermenter) * circulation_ratio  +
-        specific_butanol_growth_rate * cellmass_fermenter +
-        butanol_fermenter * dilution_rate;
+    fermenter.butanol_rate =
+        ( adsorber.butanol - fermenter.butanol ) * circulation_ratio  +
+        specific_butanol_growth_rate * fermenter.cellmass +
+        fermenter.butanol * dilution_rate;
 
     // Eq 22
-    ethanol_rate_r =
-        ( adsorber.ethanol - ethanol_fermenter) *circulation_ratio  +
-        specific_ethanol_growth_rate * cellmass_fermenter +
-        ethanol_fermenter * dilution_rate;
+    fermenter.ethanol_rate =
+        ( adsorber.ethanol - fermenter.ethanol) *circulation_ratio  +
+        specific_ethanol_growth_rate * fermenter.cellmass +
+        fermenter.ethanol * dilution_rate;
 
     // adsorber
+
+    adsorber.Delta();
 
     // Eq 13
     butanol_adsorption_rate =
@@ -252,35 +303,35 @@ void delta()
         ( adsorber.ethanol_equilibrium - adsorber.ethanol / adsorber.mass_kg  );
 
     // Eq 23
-    adsorber.cellmass_rate =
-        ( adsorber.cell_net_growth * adsorber.cellmass ) +
-        ( cellmass_fermenter - adsorber.cellmass ) * adsorber.circulation_ratio;
+    adsorber.cell_growth_rate =
+        ( adsorber.cell_specific_rate * adsorber.cellmass ) +
+        ( fermenter.cellmass - adsorber.cellmass ) * adsorber.circulation_ratio;
 
     // Eq 24
     adsorber.sugar_rate =
-        ( sugar_fermenter - adsorber.sugar ) * adsorber.circulation_ratio +
+        ( fermenter.sugar - adsorber.sugar ) * adsorber.circulation_ratio +
         specific_sugar_growth_rate * adsorber.cellmass;
 
     // Eq 25
     adsorber.butanol_rate =
-        ( butanol_fermenter - adsorber.butanol ) * adsorber.circulation_ratio +
+        ( fermenter.butanol - adsorber.butanol ) * adsorber.circulation_ratio +
         specific_butanol_growth_rate * adsorber.cellmass +
         butanol_adsorption_rate;
 
     // Eq 26
     adsorber.ethanol_rate =
-        ( ethanol_fermenter - adsorber.ethanol ) * adsorber.circulation_ratio +
+        ( fermenter.ethanol - adsorber.ethanol ) * adsorber.circulation_ratio +
         specific_ethanol_growth_rate * adsorber.cellmass +
         ethanol_adsorption_rate;
 
 }
 
-void increment( double time_step )
+void cFermenter::Increment( double time_step )
 {
-    cellmass_fermenter += time_step * cellmass_rate_r;
-    sugar_fermenter    += time_step * sugar_rate_r;
-    butanol_fermenter  += time_step * butanol_rate_r;
-    ethanol_fermenter  += time_step * ethanol_rate_r;
+    fermenter.cellmass += time_step * fermenter.cell_growth_rate;
+    fermenter.sugar    += time_step * fermenter.sugar_rate;
+    fermenter.butanol  += time_step * fermenter.butanol_rate;
+    fermenter.ethanol  += time_step * fermenter.ethanol_rate;
 
 
 }
@@ -288,10 +339,10 @@ void increment( double time_step )
 void dump()
 {
     flog << std::setprecision(3);
-    flog << std::setw(10) << cellmass_fermenter
-         <<  std::setw(10) << sugar_fermenter
-         <<  std::setw(10) << ethanol_fermenter
-         <<  std::setw(10) << butanol_fermenter;
+    flog << std::setw(10) << fermenter.cellmass
+         <<  std::setw(10) << fermenter.sugar
+         <<  std::setw(10) << fermenter.ethanol
+         <<  std::setw(10) << fermenter.butanol;
 
 }
 
@@ -318,7 +369,7 @@ int main( int ac, char* av[] )
         delta();
 
         // calculate new values after simulation timestep
-        increment( 0.0625 );
+        fermenter.Increment( 0.0625 );
         adsorber.Increment( 0.0625 );
 
 
